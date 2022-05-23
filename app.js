@@ -9,7 +9,7 @@ var logger = require('morgan');
 var storesRouter = require('./routes/stores');
 
 var app = express();
-
+app.set('view engine', 'html');
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
