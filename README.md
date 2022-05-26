@@ -1,57 +1,277 @@
-# Deploying Node.js on AWS
+# aws-SAM-helloworld
 
-As a developer you are probably already familiar with how to build and run an application on your local machine:
+This is a sample template for sam-app - Below is a brief explanation of what we have generated for you:
 
-![small localhost](1%20-%20Development%20Environment/images/localhost.png)
+```bash
+.
+├── README.md                   <-- This instructions file
+├── event.json                  <-- API Gateway Proxy Integration event payload
+├── hello_world                 <-- Source code for a lambda function
+│   ├── __init__.py
+│   ├── app.py                  <-- Lambda function code
+│   ├── requirements.txt        <-- Lambda function code
+├── template.yaml               <-- SAM Template
+└── tests                       <-- Unit tests
+    └── unit
+        ├── __init__.py
+        └── test_handler.py
+```
 
-But the next step is packaging your application up and running it on a server, or even a whole fleet of servers, and managing this can be challenging:
+# Requirements
 
-![large deployment](1%20-%20Development%20Environment/images/deployment.png)
+* [AWS CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html) already configured with Administrator permission
+* [Python 3 installed](https://www.python.org/downloads/)
+* [Docker installed](https://www.docker.com/community-edition)
+* Optional but highly recommended; Install a Python virtual env for this project 
 
-This workshop will help you take the same sample app from localhost to deployed on AWS multiple times, using a variety of different deployment mechanisms:
+# Local development
 
-- [AWS Elastic Beanstalk](https://aws.amazon.com/elasticbeanstalk/)
-- [AWS Lambda](https://aws.amazon.com/lambda/) + [Serverless](https://serverless.com/)
-- [Elastic Container Service](https://aws.amazon.com/ecs/)
-- [AWS Fargate](https://aws.amazon.com/fargate/)
-- [Kubernetes](https://kubernetes.io/) + [kops](https://github.com/kubernetes/kops) + [kubectl](https://kubernetes.io/docs/reference/generated/kubectl/kubectl/)
+## TL;DR
 
-For this workshop the sample application code is written in Node.js but the same deployment mechanisms can be applied to other runtime languages.
+### Working with a lambda running locally
+```bash
 
-## Sample Application
+# start local server
+sam local start-api
 
-<img align="left" width="140" src="https://github.com/nathanpeck/nodejs-aws-workshop/blob/master/1%20-%20Development%20Environment/images/adventure-time.png">
-The sample app is a simple REST API for an Adventure Time fan website. The API provides endpoints for consuming structured data about Adventure Time characters and locations.
+#### START-DEV-LOOP ####
+# edit files
 
-You can view an example of the raw data [here](2%20-%20Elastic%20Beanstalk/code/db.json)
+# run tests
+python -m pytest tests/ -v
 
-The external HTTP interface of the API has a basic spec:
+# re-build
+# pip freeze if needed
+sam build
+# hit localhost URL
 
-- `GET /api/` - A simple welcome message
-- `GET /api/characters` - A list of all characters
-- `GET /api/characters/:id` - Fetch a specific character by ID
-- `GET /api/locations` - A list of all locations
-- `GET /api/locations/:id` - Fetch a specific location by ID
-- `GET /api/characters/by-location/:locationId` - Fetch all characters at a specific location
-- `GET /api/characters/by-gender/:gender` - Fetch all characters of specified gender
-- `GET /api/characters/by-species/:species` - Fetch all characters of specified species
-- `GET /api/characters/by-occupation/:occupation` - Fetch all characters that have specified occupation
+# return to START-DEV-LOOP
 
-&nbsp;
+```
 
-## Instructions
+### Working with a deployed lambda
+```bash
 
-1. [Create a remote development machine](1%20-%20Development%20Environment/) to use for the rest of workshop
-2. [Deploy API using Elastic Beanstalk](2%20-%20Elastic%20Beanstalk/)
-3. [Deploy API using AWS Lambda](3%20-%20Serverless%20Lambda/)
-4. [Deploy API using Elastic Container Service](4%20-%20Elastic%20Container%20Service/)
-5. [Deploy API using AWS Fargate](5%20-%20AWS%20Fargate/)
-6. [Deploy API using Kubernetes with kops](6%20-%20Kubernetes%20(kops)/)
+# edit files
 
-If you are running at home or on your own personal dev machine you technically don't have to use the remote development machine from step #1 and could instead choose to setup the dev environment on your own machine. This workshop encourages the use of a remote dev machine to avoid variations in personal devices when giving the workshop to many attendees, and additionally to move the burden of package downloads and container uploads onto an AWS internet connection instead of the local wifi connection at the workshop venue.
+# run tests
+python -m pytest tests/ -v
 
-You will notice throughout this workshop that the instructions tend to
-focus on how to deploy architectures using infrastructure as code. So
-you will see a lot of commands that files from a `recipes` folder, for example.
-You should definitely check out the contents of these "recipes" to
-see more details about what is being deployed, and how it is configured.
+# re-build
+# pip freeze if needed
+sam build
+# package and deploy
+sam package
+sam deploy
+
+# hit URL APIGwy URL 
+```
+
+## Extended Cut 
+
+**Start local server (Invoking function locally through local API Gateway)**
+```bash
+ sam local start-api  
+```
+You'll be able to make requests at the localhost URL output by the `start-api` command.
+
+### Iterate on app code
+
+Work on `hello_world/app.py`, then re-build project.  [AWS Lambda requires a flat folder](https://docs.aws.amazon.com/lambda/latest/dg/lambda-python-how-to-create-deployment-package.html) 
+with the application as well as its dependencies in  deployment package. When you make changes to your 
+source code or dependency manifest, run the following command to build your project local testing and deployment.
+```bash
+# pip freeze > hello_world/requirements.txt
+sam build
+```
+By default, this command writes built artifacts to `.aws-sam/build` folder.
+If your dependencies contain native modules that need to be compiled specifically for the operating system 
+running on AWS Lambda, use this command to build inside a Lambda-like Docker container instead:
+```bash
+sam build --use-container
+```
+
+Make request to the localhost URL and changes to app will be reflected.
+
+### Additional Local work flows
+
+**Invoking function locally using a local sample payload**
+
+```bash
+sam local invoke HelloWorldFunction --event event.json
+```
+
+### More details on `sam local start-api`
+If the previous command ran successfully you should now be able to hit the following local endpoint 
+to invoke your function `http://localhost:3000/hello`
+
+**SAM CLI** is used to emulate both Lambda and API Gateway locally and uses our `template.yaml` to 
+understand how to bootstrap this environment (runtime, where the source code is, etc.) - The following 
+excerpt is what the CLI will read in order to initialize an API and its routes:
+
+```yaml
+...
+Events:
+    HelloWorld:
+        Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+        Properties:
+            Path: /hello
+            Method: get
+```
+
+### Packaging and deployment Details
+
+AWS Lambda Python runtime requires a flat folder with all dependencies including the application. SAM will
+use `CodeUri` property to know where to look up for both application and dependencies:
+
+```yaml
+...
+    HelloWorldFunction:
+        Type: AWS::Serverless::Function
+        Properties:
+            CodeUri: hello_world/
+            ...
+```
+
+Firstly, we need a `S3 bucket` where we can upload our Lambda functions packaged as ZIP before we deploy 
+anything - If you don't have a S3 bucket to store code artifacts then this is a good time to create one:
+
+```bash
+aws s3 mb s3://BUCKET_NAME
+```
+
+`package` and `deploy` documented 
+[here](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-deploying.html)
+
+Next, run `sam package` (*equivalent to `aws cloudformation package`*) to package our Lambda function to S3:
+
+```bash
+export BUCKET=<### Your Bucket Name ###>
+export SOURCE_TEMPLATE=template.yaml
+export PACKAGED_TEMPLATE=sam-packaged.yaml
+sam package \
+  --template-file $SOURCE_TEMPLATE \
+  --s3-bucket $BUCKET \
+  --output-template-file $PACKAGED_TEMPLATE
+```
+
+Next, running `sam deploy` (*equivalent aws `cloudformation deploy`*) will create a Cloudformation Stack and deploy your SAM resources.
+
+```bash
+export PACKAGED_TEMPLATE=sam-packaged.yaml
+export STACK_NAME=sam-app
+sam deploy \
+    --template-file ./$PACKAGED_TEMPLATE \
+    --stack-name $STACK_NAME \
+    --capabilities CAPABILITY_IAM
+    
+Waiting for changeset to be created..
+Waiting for stack create/update to complete
+Successfully created/updated stack - sam-app
+
+```
+
+> **See [Serverless Application Model (SAM) HOWTO Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-quick-start.html) for more details in how to get started.**
+
+After deployment is complete you can run the following command to retrieve the API Gateway Endpoint URL:
+
+```bash
+aws cloudformation describe-stacks \
+    --stack-name sam-app \
+    --query 'Stacks[].Outputs[?OutputKey==`HelloWorldApi`]' \
+    --output table
+``` 
+
+### Tailing Logs
+
+To simplify troubleshooting, SAM CLI has a command called sam logs. sam logs lets you fetch logs generated by your Lambda function from the command line. In addition to printing the logs on the terminal, this command has several nifty features to help you quickly find the bug.
+
+`NOTE`: This command works for all AWS Lambda functions; not just the ones you deploy using SAM.
+
+```bash
+sam logs -n HelloWorldFunction --stack-name sam-app --tail
+
+2019/02/24/[$LATEST]9705bd8a22184c4599771ca30e295cbb 2019-02-24T19:02:16.977000 START RequestId: b0da4e00-bac1-47b6-9e45-058c2a8235ee Version: $LATEST
+2019/02/24/[$LATEST]9705bd8a22184c4599771ca30e295cbb 2019-02-24T19:02:16.978000 END RequestId: b0da4e00-bac1-47b6-9e45-058c2a8235ee
+2019/02/24/[$LATEST]9705bd8a22184c4599771ca30e295cbb 2019-02-24T19:02:16.978000 REPORT RequestId: b0da4e00-bac1-47b6-9e45-058c2a8235ee  Duration: 0.50 ms       Billed Duration: 100 ms     Memory Size: 128 MB     Max Memory Used: 55 MB  
+2019/02/24/[$LATEST]9705bd8a22184c4599771ca30e295cbb 2019-02-24T19:02:58.763000 START RequestId: 4b405347-0e07-4cf8-957a-0d160b1f8fc7 Version: $LATEST
+
+```
+
+You can find more information and examples about filtering Lambda function logs in the
+[SAM CLI Documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-logging.html).
+
+### Testing
+
+
+Next, we install test dependencies and we run `pytest` against our `tests` folder to run our initial unit tests:
+
+```bash
+pip install pytest pytest-mock
+python -m pytest tests/ -v
+```
+
+## Cleanup
+
+In order to delete our Serverless Application recently deployed you can use the following AWS CLI Command:
+
+```bash
+aws cloudformation delete-stack --stack-name sam-app
+```
+
+### Step-through debugging
+
+**[Enable step-through debugging docs for supported runtimes]((https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-using-debugging.html))**
+
+
+# Appendix
+
+## SAM and AWS CLI commands
+
+All commands used throughout this document
+
+```bash
+# Generate event.json via generate-event command
+sam local generate-event apigateway aws-proxy > event.json
+
+# Invoke function locally with event.json as an input
+sam local invoke HelloWorldFunction --event event.json
+
+# Run API Gateway locally
+sam local start-api
+
+# Create S3 bucket
+aws s3 mb s3://BUCKET_NAME
+
+# Package Lambda function defined locally and upload to S3 as an artifact
+sam package \
+    --output-template-file packaged.yaml \
+    --s3-bucket REPLACE_THIS_WITH_YOUR_S3_BUCKET_NAME
+
+# Deploy SAM template as a CloudFormation stack
+sam deploy \
+    --template-file packaged.yaml \
+    --stack-name sam-app \
+    --capabilities CAPABILITY_IAM
+
+# Describe Output section of CloudFormation stack previously created
+aws cloudformation describe-stacks \
+    --stack-name sam-app \
+    --query 'Stacks[].Outputs[?OutputKey==`HelloWorldApi`]' \
+    --output table
+
+# Tail Lambda function Logs using Logical name defined in SAM Template
+sam logs -n HelloWorldFunction --stack-name sam-app --tail
+```
+
+## CodePipeline
+
+see: https://docs.aws.amazon.com/lambda/latest/dg/build-pipeline.html
+
+### CloudFormation role and add the AWSLambdaExecute policy to that role
+
+```json
+
+
+```
+

@@ -1,0 +1,280 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+    Template to build required infra for this system
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "App Settings"
+          Parameters:
+            - AppName
+            - AppCodeComitRepoName
+            - AppCodeComitRepoBranchName
+            - LambdaPackagesS3Bucket
+      - Label:
+          default: "Pipeline Settings"
+          Parameters:
+            - CodePipelineArtifactsS3Bucket
+            - AppCodeComitRepoName
+            - AppCodeComitRepoBranchName
+
+Parameters:
+
+  AppName:
+    Type: String
+    Default: hello-world
+    Description: Name of the application
+    AllowedPattern: ^[a-z0-9-_]{1,12}$
+    ConstraintDescription: Malformed input-Parameter MyParameter must match pattern ^[a-z0-9-_]{1,12}$
+  AppCodeComitRepoName:
+    Type: String
+    Description: Name of the CodeCommit Repo
+  AppCodeComitRepoBranchName:
+    Type: String
+    Default: master
+    Description: Name of the Branch to poll for changes
+  CodePipelineServiceRoleArn:
+    Type: String
+    Default: arn:aws:iam::999999999999:role/{CodePipelineServiceRole NAME}
+    AllowedPattern: arn:aws(-[\w]+)*:iam::[0-9]{12}:role/.*
+    ConstraintDescription: Value must be a complete ARN
+    Description: ARN of the shared CodePipeline service role
+  CodeBuildServiceRoleArn:
+    Type: String
+    Default: arn:aws:iam::999999999999:role/{CodeBuildServiceRole NAME}
+    Description: ARN of the shared CodeBuild service role
+    AllowedPattern: arn:aws(-[\w]+)*:iam::[0-9]{12}:role/.*
+    ConstraintDescription: Value must be a complete ARN
+  LambdaPackagesS3Bucket:
+    Type: String
+    Default: serverless-pipeline-stack-us-west-2-lambda-packages
+    Description: ARN of the shared CodeBuild service role
+  CodePipelineArtifactsS3Bucket:
+    Type: String
+    Default: serverless-pipeline-stack-us-west-2-pipeline-artifacts
+    Description: ARN of the shared CodeBuild service role
+
+
+
+Resources:
+
+  # Actions Ref:
+  #  https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/continuous-delivery-codepipeline-action-reference.html
+  #
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref CodePipelineArtifactsS3Bucket
+        Type: S3
+      DisableInboundStageTransitions: []
+      Name: !Sub ${AppName}-pipeline
+      RoleArn: !Ref CodePipelineServiceRoleArn
+      Stages:
+        # found GH example here: https://docs.aws.amazon.com/codepipeline/latest/userguide/update-change-detection.html
+        - Name: Source
+          Actions:
+            -
+              Name: CodeCommitSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              OutputArtifacts:
+                - Name: SourceOutputArtifact
+              Configuration:
+                RepositoryName: !Ref AppCodeComitRepoName
+                BranchName: !Ref AppCodeComitRepoBranchName
+                PollForSourceChanges: true
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            -
+              Name: CodeBuild
+              InputArtifacts:
+                -
+                  Name: SourceOutputArtifact
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              OutputArtifacts:
+                - Name: BuildOutputArtifact
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            -
+              Name: CF_Changeset_Create
+              InputArtifacts:
+                - Name: BuildOutputArtifact
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              OutputArtifacts:
+                - Name: ChangeSetCreateOutputArtifact
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                ChangeSetName: !Sub ${AppName}-pipeline-created
+                RoleArn: !GetAtt CodeDeployServiceRole.Arn
+                Capabilities: CAPABILITY_IAM
+                StackName: !Sub Prod-${AWS::StackName}
+                # TemplateConfiguration: BuildArtifact::config-prod.json
+                TemplatePath: BuildOutputArtifact::sam-packaged.yaml
+              RunOrder: 1
+            -
+              Name: CF_Changeset_Execute
+              InputArtifacts:
+                - Name: ChangeSetCreateOutputArtifact
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              OutputArtifacts:
+                - Name: ChangeSetExecuteOutputArtifact
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                ChangeSetName: !Sub ${AppName}-pipeline-created
+                StackName: !Sub Prod-${AWS::StackName}
+              RunOrder: 2
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AppName}-CodeBuild-Project
+      Description: Build project for code pipeline
+      ServiceRole: !Ref CodeBuildServiceRoleArn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/python:3.6.5
+        ImagePullCredentialsType: CODEBUILD
+        EnvironmentVariables:
+          -
+            Name: LAMBDA_PKG_BUCKET
+            Type: PLAINTEXT
+            Value: !Ref LambdaPackagesS3Bucket
+      Source:
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 15
+      LogsConfig:
+        CloudWatchLogs:
+          Status:  ENABLED
+          GroupName:  !Sub codebuild-${AppName}
+
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppName}-CodeDeploy-Service-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSLambdaExecute
+      Path: /
+
+  CodeDeployServiceRolePolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: !Sub ${AppName}-CodeDeploy-Service-Role-Policy
+        Roles: [ !Ref CodeDeployServiceRole ]
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            -
+              Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:GetObjectVersion
+                - s3:GetBucketVersioning
+              Resource: "*"
+            -
+              # Need permission to put lambda packages in the app's designated S3 bucket
+              Action:
+                - s3:PutObject
+              Resource:
+                - !Sub arn:aws:s3:::${LambdaPackagesS3Bucket}/*
+              Effect: Allow
+            -
+              Action:
+                - lambda:*
+              Resource:
+                - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*
+              Effect: Allow
+            -
+              Action:
+                - apigateway:*
+              Resource:
+                - !Sub arn:aws:apigateway:${AWS::Region}::*
+              Effect: Allow
+            -
+              Action:
+                - iam:GetRole
+                - iam:CreateRole
+                - iam:DeleteRole
+                - iam:PutRolePolicy
+              Resource:
+                - !Sub arn:aws:iam::${AWS::AccountId}:role/*
+              Effect: Allow
+            -
+              Action:
+                - iam:AttachRolePolicy
+                - iam:DeleteRolePolicy
+                - iam:DetachRolePolicy
+              Resource:
+                - !Sub arn:aws:iam::${AWS::AccountId}:role/*
+              Effect: Allow
+            -
+              Action:
+                - iam:PassRole
+              Resource:
+                - "*"
+              Effect: Allow
+            -
+              Action:
+                - cloudformation:CreateChangeSet
+              Resource:
+                - !Sub arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
+              Effect: Allow
+            -
+              Action:
+                - codedeploy:CreateApplication
+                - codedeploy:DeleteApplication
+                - codedeploy:RegisterApplicationRevision
+              Resource:
+                - !Sub arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:application:*
+              Effect: Allow
+            -
+              Action:
+                - codedeploy:CreateDeploymentGroup
+                - codedeploy:CreateDeployment
+                - codedeploy:GetDeployment
+              Resource:
+                - !Sub  arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:*
+              Effect: Allow
+            -
+              Action:
+                - codedeploy:GetDeploymentConfig
+              Resource:
+                - !Sub arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentconfig:*
+              Effect: Allow
+
+Outputs:
+
+  ServiceRoleForCodeDeploy:
+    Description: The CodeBuild's Service Role
+    Value: !Ref CodeDeployServiceRole
+
